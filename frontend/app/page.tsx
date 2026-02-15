@@ -61,9 +61,16 @@ export default function HomePage() {
     setMessages((prev) => [...prev, userMsg, thinkingMsg]);
 
     try {
-      await new Promise((r) => setTimeout(r, 400));
-      const replyText =
-        "Stub reply ✅ Next step: connect this to the backend /api/chat endpoint.";
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      })
+
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+
+      const data = (await res.json()) as { reply: string };
+      const replyText = data.reply;
 
       setMessages((prev) =>
         prev.map((m) =>
