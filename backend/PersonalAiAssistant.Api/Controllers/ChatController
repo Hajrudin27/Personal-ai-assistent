@@ -1,0 +1,20 @@
+using Microsoft.AspNetCore.Mvc;
+
+namespace PersonalAiAssistant.Api.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class ChatController : ControllerBase
+{
+    public record ChatRequest(string Message);
+    public record ChatResponse(string Reply);
+
+    [HttpPost]
+    public ActionResult<ChatResponse> Post([FromBody] ChatRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Message))
+            return BadRequest("Message is required.");
+
+        return Ok(new ChatResponse($"You said: {request.Message}"));
+    }
+}
