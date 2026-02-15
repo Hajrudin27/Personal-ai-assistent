@@ -87,6 +87,35 @@ app.MapGet("/api/documents", async () =>
     return Results.Ok(docs);
 });
 
+app.MapGet("/api/documents/{id}/download", (string id) =>
+{
+    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
+
+    if (!Directory.Exists(uploadsDir))
+        return Results.NotFound("Uploads folder not found.");
+
+    var metaPath = Path.Combine(uploadsDir, $"{id}.json");
+    if (!File.Exists(metaPath))
+        return Results.NotFound("Document not found.");
+
+    var json = File.ReadAllText(metaPath);
+    var meta = JsonSerializer.Deserialize<DocumentMeta>(json);
+
+    if (meta == null)
+        return Results.NotFound("Metadata not found.");
+
+    var filePath = Path.Combine(uploadsDir, meta.StoredFileName);
+
+    if (!File.Exists(filePath))
+        return Results.NotFound("File missing.");
+
+    return Results.File(
+        filePath,
+        "application/octet-stream",
+        meta.OriginalFileName
+    );
+});
+
 app.Run();
 
 public sealed record ChatRequest(string Message);

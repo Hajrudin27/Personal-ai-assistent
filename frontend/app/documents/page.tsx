@@ -92,7 +92,14 @@ export default function DocumentsPage() {
                 <tbody>
                   {docs.map((d) => (
                     <tr key={d.id} className="border-b last:border-b-0">
-                      <td className="py-2 pr-3">{d.originalFileName}</td>
+                      <td className="py-2 pr-3">
+                        <a
+                        href={`/api/documents/${d.id}/download`}
+                        className="underline text-blue-600"
+                        >
+                            {d.originalFileName}
+                        </a>
+                        </td>
                       <td className="py-2 pr-3">{formatBytes(d.sizeBytes)}</td>
                       <td className="py-2 pr-3">
                         {new Date(d.uploadedAtUtc)
