@@ -147,3 +147,11 @@
 /Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/obj/Debug/net8.0/PersonalAiAssistant.Api.pdb
 /Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/obj/Debug/net8.0/PersonalAiAssistant.Api.genruntimeconfig.cache
 /Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/obj/Debug/net8.0/ref/PersonalAiAssistant.Api.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Google.Apis.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Google.Apis.Auth.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Google.Apis.Core.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Google.GenAI.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Microsoft.Extensions.AI.Abstractions.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Newtonsoft.Json.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/System.Management.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/runtimes/win/lib/net7.0/System.Management.dll

@@ -1,14 +1,17 @@
-using System.Text.Json;
-using UglyToad.PdfPig;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using UglyToad.PdfPig;
 using PersonalAiAssistant.Api.Data;
 using PersonalAiAssistant.Api.Models;
+using PersonalAiAssistant.Api.Services;
+using Pgvector;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddSingleton<GeminiEmbeddingService>();
 
 var connStr = builder.Configuration.GetConnectionString("Db");
 builder.Services.AddDbContext<AppDbContext>(opt => opt.UseNpgsql(connStr, o => o.UseVector()));
@@ -26,7 +29,6 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 
-
 app.MapPost("/api/chat", (ChatRequest request) =>
 {
     if (string.IsNullOrWhiteSpace(request.Message))
@@ -35,12 +37,12 @@ app.MapPost("/api/chat", (ChatRequest request) =>
     return Results.Ok(new { reply = $"You said: {request.Message}" });
 });
 
-app.MapPost("/api/documents", async (IFormFile file, AppDbContext db) =>
+app.MapPost("/api/documents", async (IFormFile file, AppDbContext db, IWebHostEnvironment env) =>
 {
     if (file == null || file.Length == 0)
         return Results.BadRequest("File is required.");
 
-    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
+    var uploadsDir = Path.Combine(env.ContentRootPath, "Uploads");
     Directory.CreateDirectory(uploadsDir);
 
     var originalFileName = Path.GetFileName(file.FileName);
@@ -78,7 +80,6 @@ app.MapPost("/api/documents", async (IFormFile file, AppDbContext db) =>
 .Accepts<IFormFile>("multipart/form-data")
 .DisableAntiforgery();
 
-
 app.MapGet("/api/documents", async (AppDbContext db) =>
 {
     var docs = await db.Documents
@@ -95,7 +96,6 @@ app.MapGet("/api/documents", async (AppDbContext db) =>
 
     return Results.Ok(docs);
 });
-
 
 app.MapGet("/api/documents/{id}/download", async (string id, AppDbContext db, IWebHostEnvironment env) =>
 {
@@ -152,7 +152,6 @@ app.MapGet("/api/documents/{id}/text", async (string id, AppDbContext db, IWebHo
 
     return Results.BadRequest("Text extraction not supported for this file type.");
 });
-
 
 app.MapGet("/api/documents/{id}/chunks", async (string id, int? maxChars, int? overlap, AppDbContext db, IWebHostEnvironment env) =>
 {
@@ -211,14 +210,13 @@ app.MapGet("/api/documents/{id}/chunks", async (string id, int? maxChars, int? o
     return Results.Ok(new { id = doc.Id, chunks });
 });
 
-
-app.MapPost("/api/documents/{id}/ingest", async (string id, AppDbContext db, int? maxChars, int? overlap) =>
+app.MapPost("/api/documents/{id}/ingest", async (string id, int? maxChars, int? overlap, AppDbContext db, IWebHostEnvironment env, GeminiEmbeddingService emb) =>
 {
     var doc = await db.Documents.FirstOrDefaultAsync(d => d.Id == id);
     if (doc == null)
         return Results.NotFound("Document not found.");
 
-    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
+    var uploadsDir = Path.Combine(env.ContentRootPath, "Uploads");
     var filePath = Path.Combine(uploadsDir, doc.StoredFileName);
 
     if (!File.Exists(filePath))
@@ -269,6 +267,8 @@ app.MapPost("/api/documents/{id}/ingest", async (string id, AppDbContext db, int
 
     for (var i = 0; i < chunkTexts.Count; i++)
     {
+        var vector = await emb.EmbedAsync(chunkTexts[i]);
+
         db.Chunks.Add(new ChunkEntity
         {
             Id = Guid.NewGuid(),
@@ -276,7 +276,7 @@ app.MapPost("/api/documents/{id}/ingest", async (string id, AppDbContext db, int
             Index = i,
             Text = chunkTexts[i],
             CreatedAtUtc = now,
-            Embedding = null
+            Embedding = new Vector(vector)
         });
     }
 
@@ -304,6 +304,23 @@ app.MapGet("/api/documents/{id}/chunks/stored", async (string id, AppDbContext d
     return Results.Ok(new { id, chunks });
 });
 
+app.MapGet("/api/documents/{id}/chunks/db", async (string id, AppDbContext db) =>
+{
+    var rows = await db.Chunks
+        .Where(c => c.DocumentId == id)
+        .OrderBy(c => c.Index)
+        .Select(c => new { c.Index, hasEmbedding = c.Embedding != null, dims = c.Embedding == null ? 0 : c.Embedding.ToArray().Length })
+        .Take(10)
+        .ToListAsync();
+
+    return Results.Ok(rows);
+});
+
+app.MapGet("/api/embeddings/test", async (GeminiEmbeddingService emb) =>
+{
+    var v = await emb.EmbedAsync("hello from embeddings test");
+    return Results.Ok(new { dims = v.Length, first = v.Take(5).ToArray() });
+});
 
 app.Run();
 
@@ -335,7 +352,6 @@ static string NormalizeText(string input)
 
     return s.Trim();
 }
-
 
 static IEnumerable<string> ChunkText(string text, int maxChars, int overlap)
 {
