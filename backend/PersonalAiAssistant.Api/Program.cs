@@ -116,6 +116,36 @@ app.MapGet("/api/documents/{id}/download", (string id) =>
     );
 });
 
+app.MapGet("/api/documents/{id}/text", async (string id) =>
+{
+    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
+
+    var metaPath = Path.Combine(uploadsDir, $"{id}.json");
+    if (!File.Exists(metaPath))
+        return Results.NotFound("Document not found.");
+
+    var json = await File.ReadAllTextAsync(metaPath);
+    var meta = JsonSerializer.Deserialize<DocumentMeta>(json);
+
+    if (meta == null)
+        return Results.NotFound("Metadata not found.");
+
+    var filePath = Path.Combine(uploadsDir, meta.StoredFileName);
+    if (!File.Exists(filePath))
+        return Results.NotFound("File missing.");
+
+    var ext = Path.GetExtension(meta.OriginalFileName).ToLowerInvariant();
+
+    if (ext is ".txt" or ".md")
+    {
+        var text = await File.ReadAllTextAsync(filePath);
+        return Results.Ok(new { id = meta.Id, text });
+    }
+
+    return Results.BadRequest("Text extraction not supported for this file type yet.");
+});
+
+
 app.Run();
 
 public sealed record ChatRequest(string Message);
