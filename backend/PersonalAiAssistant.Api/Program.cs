@@ -12,6 +12,10 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddSingleton<GeminiEmbeddingService>();
+builder.Services.AddHttpClient<OllamaChatService>(c =>
+{
+    c.BaseAddress = new Uri("http://localhost:11434");
+});
 
 var connStr = builder.Configuration.GetConnectionString("Db");
 builder.Services.AddDbContext<AppDbContext>(opt => opt.UseNpgsql(connStr, o => o.UseVector()));
@@ -29,7 +33,7 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 
-app.MapPost("/api/chat", async (ChatRequest request, AppDbContext db, GeminiEmbeddingService emb) =>
+app.MapPost("/api/chat", async (ChatRequest request, AppDbContext db, GeminiEmbeddingService emb, OllamaChatService ollama) =>
 {
     if (string.IsNullOrWhiteSpace(request.Message))
         return Results.BadRequest("Message is required.");
@@ -59,6 +63,7 @@ app.MapPost("/api/chat", async (ChatRequest request, AppDbContext db, GeminiEmbe
     }
 
     var qNorm = Norm(qVec);
+
     var topContexts = candidates
         .Select(c =>
         {
@@ -71,26 +76,12 @@ app.MapPost("/api/chat", async (ChatRequest request, AppDbContext db, GeminiEmbe
         .Select(x => x.Text)
         .ToList();
 
-    var prompt = BuildRagPrompt(request.Message, topContexts);
+    var system = BuildSystemPrompt(topContexts);
+    var user = BuildUserPrompt(request.Message);
 
-    try
-    {
-        var res = await emb.ChatAsync(prompt);
-        return Results.Ok(new { reply = res, used = "gemini" });
-    }
-    catch (Exception)
-    {
-        // Fallback: return the retrieved context so the UI still works for free.
-        return Results.Ok(new
-        {
-            reply = "Gemini generation is unavailable (quota/billing). Here are the most relevant notes from your documents:",
-            used = "fallback",
-            context = topContexts
-        });
-    }
-
+    var answer = await ollama.ChatAsync(system, user);
+    return Results.Ok(new { reply = answer, used = "ollama", context = topContexts });
 });
-
 
 app.MapPost("/api/documents", async (IFormFile file, AppDbContext db, IWebHostEnvironment env) =>
 {
@@ -414,8 +405,8 @@ app.MapGet("/api/search", async (string q, int? k, AppDbContext db, GeminiEmbedd
     var scored = candidates
         .Select(c =>
         {
-            var vec = c.Embedding!.ToArray();  
-            var score = Dot(qVec, vec) / (qNorm * (Norm(vec) + 1e-12));  
+            var vec = c.Embedding!.ToArray();
+            var score = Dot(qVec, vec) / (qNorm * (Norm(vec) + 1e-12));
             return new { c.DocumentId, c.Index, c.Text, score };
         })
         .OrderByDescending(x => x.score)
@@ -546,21 +537,46 @@ static IEnumerable<string> ChunkText(string text, int maxChars, int overlap)
         yield return c;
 }
 
-static string BuildRagPrompt(string userMessage, IEnumerable<string> contexts)
+static string BuildSystemPrompt(IEnumerable<string> contexts)
 {
-    var ctx = string.Join("\n\n---\n\n", contexts);
+    var ctxList = contexts
+        .Where(s => !string.IsNullOrWhiteSpace(s))
+        .Select((s, i) => $"SOURCE {i + 1}:\n{s.Trim()}")
+        .ToArray();
+
+    var ctx = ctxList.Length == 0 ? "(no sources)" : string.Join("\n\n", ctxList);
 
     return
-$@"You are a helpful assistant. Use the CONTEXT to answer the USER QUESTION.
-If the answer is not in the context, say you don't know.
+$@"You are a helpful assistant.
+You must answer using ONLY the SOURCES below.
+If the user asks what the document says, you should repeat/quote the most relevant source.
+If the answer is not present, reply exactly: I don't know.
 
-CONTEXT:
-{ctx}
+Example:
+SOURCES:
+SOURCE 1:
+This is a test.
 
-USER QUESTION:
-{userMessage}";
+User: What does the document say?
+Assistant: The document says: ""This is a test."" 
+Sources used: SOURCE 1
+
+Now follow the same pattern.
+
+SOURCES:
+{ctx}";
 }
 
+
+static string BuildUserPrompt(string userMessage)
+{
+    return
+$@"Question: {userMessage}
+
+Answer format:
+- Answer in 1 sentence.
+- Then: Sources used: SOURCE X";
+}
 
 public sealed record ChatRequest(string Message);
 public sealed record ChunkDto(int Index, string Text);
