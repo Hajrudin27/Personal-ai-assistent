@@ -20,8 +20,7 @@ export default function HomePage() {
     {
       id: uid(),
       role: "assistant",
-      content:
-        "Hey! I’m your Personal AI Knowledge Assistant. Ask me anything.",
+      content: "Hey! I’m your Personal AI Knowledge Assistant. Ask me anything.",
       createdAt: Date.now(),
     },
   ]);
@@ -29,6 +28,7 @@ export default function HomePage() {
   const [isSending, setIsSending] = useState(false);
 
   const listRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     listRef.current?.scrollTo({
       top: listRef.current.scrollHeight,
@@ -65,7 +65,7 @@ export default function HomePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
-      })
+      });
 
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
 
@@ -73,11 +73,9 @@ export default function HomePage() {
       const replyText = data.reply;
 
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === thinkingId ? { ...m, content: replyText } : m
-        )
+        prev.map((m) => (m.id === thinkingId ? { ...m, content: replyText } : m))
       );
-    } catch (err) {
+    } catch {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === thinkingId
@@ -102,9 +100,7 @@ export default function HomePage() {
       <div className="mx-auto flex min-h-screen max-w-3xl flex-col px-4 py-6">
         <header className="mb-4">
           <h1 className="text-2xl font-semibold">Personal AI Assistant</h1>
-          <p className="text-sm text-gray-600">
-            Step 3: Chat UI. Next: connect to ASP.NET API.
-          </p>
+          <p className="text-sm text-gray-600">Chat UI</p>
         </header>
 
         <div
@@ -114,9 +110,7 @@ export default function HomePage() {
           {messages.map((m) => (
             <div
               key={m.id}
-              className={`flex ${
-                m.role === "user" ? "justify-end" : "justify-start"
-              }`}
+              className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
                 className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2 text-sm leading-relaxed ${
@@ -135,7 +129,7 @@ export default function HomePage() {
           <div className="flex items-end gap-3">
             <textarea
               className="min-h-[48px] flex-1 resize-none rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black/20 disabled:bg-gray-50"
-              placeholder="Type your message… (Enter to send, Shift+Enter for new line)"
+              placeholder="Type your message…"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
@@ -149,9 +143,6 @@ export default function HomePage() {
               Send
             </button>
           </div>
-          <p className="mt-2 text-xs text-gray-500">
-            Tip: Press <b>Enter</b> to send, <b>Shift+Enter</b> for a new line.
-          </p>
         </div>
       </div>
     </main>
