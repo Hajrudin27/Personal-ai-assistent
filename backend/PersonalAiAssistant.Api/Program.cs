@@ -51,6 +51,30 @@ app.MapPost("/api/documents", async (IFormFile file) =>
 .Accepts<IFormFile>("multipart/form-data")
 .DisableAntiforgery();
 
+app.MapGet("/api/documents", () =>
+{
+    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
+
+    if (!Directory.Exists(uploadsDir))
+        return Results.Ok(Array.Empty<object>());
+
+    var files = Directory.GetFiles(uploadsDir);
+
+    var result = files.Select(path =>
+    {
+        var fileInfo = new FileInfo(path);
+
+        return new
+        {
+            storedFileName = fileInfo.Name,
+            sizeBytes = fileInfo.Length
+        };
+    });
+
+    return Results.Ok(result);
+});
+
+
 app.Run();
 
 public sealed record ChatRequest(string Message);
