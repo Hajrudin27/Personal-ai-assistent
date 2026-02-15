@@ -1,11 +1,17 @@
 using System.Text.Json;
 using UglyToad.PdfPig;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
+using PersonalAiAssistant.Api.Data;
+using PersonalAiAssistant.Api.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+var connStr = builder.Configuration.GetConnectionString("Db");
+builder.Services.AddDbContext<AppDbContext>(opt => opt.UseNpgsql(connStr, o => o.UseVector()));
 
 var app = builder.Build();
 
@@ -25,7 +31,7 @@ app.MapPost("/api/chat", (ChatRequest request) =>
     return Results.Ok(new { reply = $"You said: {request.Message}" });
 });
 
-app.MapPost("/api/documents", async (IFormFile file) =>
+app.MapPost("/api/documents", async (IFormFile file, AppDbContext db) =>
 {
     if (file == null || file.Length == 0)
         return Results.BadRequest("File is required.");
@@ -44,48 +50,48 @@ app.MapPost("/api/documents", async (IFormFile file) =>
         await file.CopyToAsync(stream);
     }
 
-    var meta = new DocumentMeta(
-        Id: docId,
-        OriginalFileName: originalFileName,
-        StoredFileName: storedName,
-        SizeBytes: file.Length,
-        UploadedAtUtc: DateTime.UtcNow
-    );
+    var doc = new DocumentEntity
+    {
+        Id = docId,
+        OriginalFileName = originalFileName,
+        StoredFileName = storedName,
+        SizeBytes = file.Length,
+        UploadedAtUtc = DateTime.UtcNow
+    };
 
-    var metaPath = Path.Combine(uploadsDir, $"{docId}.json");
-    await File.WriteAllTextAsync(metaPath, JsonSerializer.Serialize(meta));
+    db.Documents.Add(doc);
+    await db.SaveChangesAsync();
 
-    return Results.Ok(meta);
+    return Results.Ok(new
+    {
+        id = doc.Id,
+        originalFileName = doc.OriginalFileName,
+        storedFileName = doc.StoredFileName,
+        sizeBytes = doc.SizeBytes,
+        uploadedAtUtc = doc.UploadedAtUtc
+    });
 })
 .Accepts<IFormFile>("multipart/form-data")
 .DisableAntiforgery();
 
-app.MapGet("/api/documents", async () =>
+
+app.MapGet("/api/documents", async (AppDbContext db) =>
 {
-    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
-
-    if (!Directory.Exists(uploadsDir))
-        return Results.Ok(Array.Empty<DocumentMeta>());
-
-    var metaFiles = Directory.GetFiles(uploadsDir, "*.json");
-    var docs = new List<DocumentMeta>();
-
-    foreach (var path in metaFiles)
-    {
-        try
+    var docs = await db.Documents
+        .OrderByDescending(d => d.UploadedAtUtc)
+        .Select(d => new
         {
-            var json = await File.ReadAllTextAsync(path);
-            var meta = JsonSerializer.Deserialize<DocumentMeta>(json);
-            if (meta != null) docs.Add(meta);
-        }
-        catch
-        {
-        }
-    }
+            id = d.Id,
+            originalFileName = d.OriginalFileName,
+            storedFileName = d.StoredFileName,
+            sizeBytes = d.SizeBytes,
+            uploadedAtUtc = d.UploadedAtUtc
+        })
+        .ToListAsync();
 
-    docs.Sort((a, b) => b.UploadedAtUtc.CompareTo(a.UploadedAtUtc));
     return Results.Ok(docs);
 });
+
 
 app.MapGet("/api/documents/{id}/download", (string id) =>
 {
@@ -216,6 +222,99 @@ app.MapGet("/api/documents/{id}/chunks", async (string id, int? maxChars, int? o
 
     return Results.Ok(new { id = meta.Id, chunks });
 });
+
+app.MapPost("/api/documents/{id}/ingest", async (string id, AppDbContext db, int? maxChars, int? overlap) =>
+{
+    var doc = await db.Documents.FirstOrDefaultAsync(d => d.Id == id);
+    if (doc == null)
+        return Results.NotFound("Document not found.");
+
+    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
+    var filePath = Path.Combine(uploadsDir, doc.StoredFileName);
+
+    if (!File.Exists(filePath))
+        return Results.NotFound("File missing.");
+
+    var ext = Path.GetExtension(doc.OriginalFileName).ToLowerInvariant();
+
+    string text;
+
+    if (ext is ".txt" or ".md")
+    {
+        text = await File.ReadAllTextAsync(filePath);
+    }
+    else if (ext == ".pdf")
+    {
+        var sb = new System.Text.StringBuilder();
+        using var pdf = PdfDocument.Open(filePath);
+        foreach (var page in pdf.GetPages())
+        {
+            var pageText = page.Text;
+            if (!string.IsNullOrWhiteSpace(pageText))
+            {
+                sb.AppendLine(pageText);
+                sb.AppendLine();
+            }
+        }
+        text = sb.ToString();
+    }
+    else
+    {
+        return Results.BadRequest("Ingest not supported for this file type.");
+    }
+
+    var chunkSize = maxChars.GetValueOrDefault(1200);
+    var chunkOverlap = overlap.GetValueOrDefault(150);
+
+    if (chunkSize < 200) chunkSize = 200;
+    if (chunkOverlap < 0) chunkOverlap = 0;
+    if (chunkOverlap >= chunkSize) chunkOverlap = Math.Max(0, chunkSize / 4);
+
+    var cleaned = NormalizeText(text);
+    var chunkTexts = ChunkText(cleaned, chunkSize, chunkOverlap).ToList();
+
+    var existing = db.Chunks.Where(c => c.DocumentId == doc.Id);
+    db.Chunks.RemoveRange(existing);
+
+    var now = DateTime.UtcNow;
+
+    for (var i = 0; i < chunkTexts.Count; i++)
+    {
+        db.Chunks.Add(new ChunkEntity
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = doc.Id,
+            Index = i,
+            Text = chunkTexts[i],
+            CreatedAtUtc = now,
+            Embedding = null
+        });
+    }
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        id = doc.Id,
+        chunksStored = chunkTexts.Count
+    });
+});
+
+app.MapGet("/api/documents/{id}/chunks/stored", async (string id, AppDbContext db) =>
+{
+    var docExists = await db.Documents.AnyAsync(d => d.Id == id);
+    if (!docExists)
+        return Results.NotFound("Document not found.");
+
+    var chunks = await db.Chunks
+        .Where(c => c.DocumentId == id)
+        .OrderBy(c => c.Index)
+        .Select(c => new { c.Index, c.Text })
+        .ToListAsync();
+
+    return Results.Ok(new { id, chunks });
+});
+
 
 app.Run();
 
