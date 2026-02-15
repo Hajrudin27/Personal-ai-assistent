@@ -24,8 +24,10 @@ export default function HomePage() {
       createdAt: Date.now(),
     },
   ]);
+
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -35,6 +37,50 @@ export default function HomePage() {
       behavior: "smooth",
     });
   }, [messages]);
+
+  async function uploadFile(file: File) {
+    setIsUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+
+      const res = await fetch("/api/documents", {
+        method: "POST",
+        body: form,
+      });
+
+      if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+
+      const data = (await res.json()) as {
+        id: string;
+        originalFileName: string;
+        storedFileName: string;
+        sizeBytes: number;
+      };
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: uid(),
+          role: "assistant",
+          content: `Uploaded: ${data.originalFileName}`,
+          createdAt: Date.now(),
+        },
+      ]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: uid(),
+          role: "assistant",
+          content: "Upload failed. Please try again.",
+          createdAt: Date.now(),
+        },
+      ]);
+    } finally {
+      setIsUploading(false);
+    }
+  }
 
   async function sendMessage() {
     const text = input.trim();
@@ -101,6 +147,23 @@ export default function HomePage() {
         <header className="mb-4">
           <h1 className="text-2xl font-semibold">Personal AI Assistant</h1>
           <p className="text-sm text-gray-600">Chat UI</p>
+
+          <div className="mt-3 flex items-center gap-3">
+            <label className="inline-flex cursor-pointer items-center rounded-lg bg-black px-4 py-2 text-sm font-medium text-white">
+              <input
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void uploadFile(f);
+                  e.currentTarget.value = "";
+                }}
+                disabled={isUploading}
+              />
+              {isUploading ? "Uploading..." : "Upload document"}
+            </label>
+            <span className="text-xs text-gray-500">PDF or text</span>
+          </div>
         </header>
 
         <div
