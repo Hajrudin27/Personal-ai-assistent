@@ -21,7 +21,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
 
 app.MapPost("/api/chat", (ChatRequest request) =>
 {
@@ -93,51 +97,39 @@ app.MapGet("/api/documents", async (AppDbContext db) =>
 });
 
 
-app.MapGet("/api/documents/{id}/download", (string id) =>
+app.MapGet("/api/documents/{id}/download", async (string id, AppDbContext db, IWebHostEnvironment env) =>
 {
-    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
-    if (!Directory.Exists(uploadsDir))
-        return Results.NotFound("Uploads folder not found.");
-
-    var metaPath = Path.Combine(uploadsDir, $"{id}.json");
-    if (!File.Exists(metaPath))
+    var doc = await db.Documents.FirstOrDefaultAsync(d => d.Id == id);
+    if (doc == null)
         return Results.NotFound("Document not found.");
 
-    var json = File.ReadAllText(metaPath);
-    var meta = JsonSerializer.Deserialize<DocumentMeta>(json);
-    if (meta == null)
-        return Results.NotFound("Metadata not found.");
+    var uploadsDir = Path.Combine(env.ContentRootPath, "Uploads");
+    var filePath = Path.Combine(uploadsDir, doc.StoredFileName);
 
-    var filePath = Path.Combine(uploadsDir, meta.StoredFileName);
     if (!File.Exists(filePath))
         return Results.NotFound("File missing.");
 
-    return Results.File(filePath, "application/octet-stream", meta.OriginalFileName);
+    return Results.File(filePath, "application/octet-stream", doc.OriginalFileName);
 });
 
-app.MapGet("/api/documents/{id}/text", async (string id) =>
+app.MapGet("/api/documents/{id}/text", async (string id, AppDbContext db, IWebHostEnvironment env) =>
 {
-    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
-
-    var metaPath = Path.Combine(uploadsDir, $"{id}.json");
-    if (!File.Exists(metaPath))
+    var doc = await db.Documents.FirstOrDefaultAsync(d => d.Id == id);
+    if (doc == null)
         return Results.NotFound("Document not found.");
 
-    var json = await File.ReadAllTextAsync(metaPath);
-    var meta = JsonSerializer.Deserialize<DocumentMeta>(json);
-    if (meta == null)
-        return Results.NotFound("Metadata not found.");
+    var uploadsDir = Path.Combine(env.ContentRootPath, "Uploads");
+    var filePath = Path.Combine(uploadsDir, doc.StoredFileName);
 
-    var filePath = Path.Combine(uploadsDir, meta.StoredFileName);
     if (!File.Exists(filePath))
         return Results.NotFound("File missing.");
 
-    var ext = Path.GetExtension(meta.OriginalFileName).ToLowerInvariant();
+    var ext = Path.GetExtension(doc.OriginalFileName).ToLowerInvariant();
 
     if (ext is ".txt" or ".md")
     {
         var text = await File.ReadAllTextAsync(filePath);
-        return Results.Ok(new { id = meta.Id, text });
+        return Results.Ok(new { id = doc.Id, text });
     }
 
     if (ext == ".pdf")
@@ -155,30 +147,26 @@ app.MapGet("/api/documents/{id}/text", async (string id) =>
             }
         }
 
-        return Results.Ok(new { id = meta.Id, text = sb.ToString() });
+        return Results.Ok(new { id = doc.Id, text = sb.ToString() });
     }
 
     return Results.BadRequest("Text extraction not supported for this file type.");
 });
 
-app.MapGet("/api/documents/{id}/chunks", async (string id, int? maxChars, int? overlap) =>
-{
-    var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
 
-    var metaPath = Path.Combine(uploadsDir, $"{id}.json");
-    if (!File.Exists(metaPath))
+app.MapGet("/api/documents/{id}/chunks", async (string id, int? maxChars, int? overlap, AppDbContext db, IWebHostEnvironment env) =>
+{
+    var doc = await db.Documents.FirstOrDefaultAsync(d => d.Id == id);
+    if (doc == null)
         return Results.NotFound("Document not found.");
 
-    var json = await File.ReadAllTextAsync(metaPath);
-    var meta = JsonSerializer.Deserialize<DocumentMeta>(json);
-    if (meta == null)
-        return Results.NotFound("Metadata not found.");
+    var uploadsDir = Path.Combine(env.ContentRootPath, "Uploads");
+    var filePath = Path.Combine(uploadsDir, doc.StoredFileName);
 
-    var filePath = Path.Combine(uploadsDir, meta.StoredFileName);
     if (!File.Exists(filePath))
         return Results.NotFound("File missing.");
 
-    var ext = Path.GetExtension(meta.OriginalFileName).ToLowerInvariant();
+    var ext = Path.GetExtension(doc.OriginalFileName).ToLowerInvariant();
 
     string text;
 
@@ -220,8 +208,9 @@ app.MapGet("/api/documents/{id}/chunks", async (string id, int? maxChars, int? o
         .Select((t, i) => new ChunkDto(i, t))
         .ToArray();
 
-    return Results.Ok(new { id = meta.Id, chunks });
+    return Results.Ok(new { id = doc.Id, chunks });
 });
+
 
 app.MapPost("/api/documents/{id}/ingest", async (string id, AppDbContext db, int? maxChars, int? overlap) =>
 {
@@ -432,13 +421,4 @@ static IEnumerable<string> ChunkText(string text, int maxChars, int overlap)
 }
 
 public sealed record ChatRequest(string Message);
-
-public sealed record DocumentMeta(
-    string Id,
-    string OriginalFileName,
-    string StoredFileName,
-    long SizeBytes,
-    DateTime UploadedAtUtc
-);
-
 public sealed record ChunkDto(int Index, string Text);
