@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "LexIUe8vkO2tsQE5IeZ0acfLEXGuDmqo6Qn6C52oZH8=",
+  "Source": "PersonalAiAssistant.Api",
+  "BasePath": "_content/PersonalAiAssistant.Api",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}
