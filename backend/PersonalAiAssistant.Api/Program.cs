@@ -1,4 +1,5 @@
 using System.Text.Json;
+using UglyToad.PdfPig;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -142,9 +143,27 @@ app.MapGet("/api/documents/{id}/text", async (string id) =>
         return Results.Ok(new { id = meta.Id, text });
     }
 
-    return Results.BadRequest("Text extraction not supported for this file type yet.");
-});
+    if (ext == ".pdf")
+    {
+        var sb = new System.Text.StringBuilder();
 
+        using var document = PdfDocument.Open(filePath);
+
+        foreach (var page in document.GetPages())
+        {
+            var pageText = page.Text;
+            if (!string.IsNullOrWhiteSpace(pageText))
+            {
+                sb.AppendLine(pageText);
+                sb.AppendLine();
+            }
+        }
+
+        return Results.Ok(new { id = meta.Id, text = sb.ToString() });
+    }
+
+    return Results.BadRequest("Text extraction not supported for this file type.");
+});
 
 app.Run();
 
