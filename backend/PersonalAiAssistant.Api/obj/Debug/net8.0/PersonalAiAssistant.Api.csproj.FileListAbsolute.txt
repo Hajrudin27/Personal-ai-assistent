@@ -36,3 +36,9 @@
 /Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Uploads/8869ade6d75744d9b4db859b5629ecc5.json
 /Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Uploads/d10b57e7e2ea44db914e82d36f6def24.json
 /Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Uploads/68475868148e47d58f88f337629f084b.json
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/Uploads/ab552443365e4a1d9195b25194dd5a21.json
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/UglyToad.PdfPig.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/UglyToad.PdfPig.Core.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/UglyToad.PdfPig.Fonts.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/UglyToad.PdfPig.Tokenization.dll
+/Users/hajrudinkardasevic/Desktop/Portfolio/Personal-ai-assistent/backend/PersonalAiAssistant.Api/bin/Debug/net8.0/UglyToad.PdfPig.Tokens.dll
