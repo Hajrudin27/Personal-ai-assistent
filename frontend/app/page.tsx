@@ -9,6 +9,7 @@ type ChatMessage = {
   role: Role;
   content: string;
   createdAt: number;
+  context?: string[];
 };
 
 function uid() {
@@ -119,11 +120,17 @@ export default function HomePage() {
 
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
 
-      const data = (await res.json()) as { reply: string };
+      const data = (await res.json()) as {
+        reply: string;
+        used?: string;
+        context?: string[];
+      };
 
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === thinkingId ? { ...m, content: data.reply } : m
+          m.id === thinkingId
+            ? { ...m, content: data.reply, context: data.context }
+            : m
         )
       );
     } catch {
@@ -184,21 +191,37 @@ export default function HomePage() {
           className="flex-1 space-y-3 overflow-y-auto rounded-xl border bg-white p-4 shadow-sm"
         >
           {messages.map((m) => (
-            <div
-              key={m.id}
-              className={`flex ${
-                m.role === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
+            <div key={m.id}>
               <div
-                className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2 text-sm leading-relaxed ${
-                  m.role === "user"
-                    ? "bg-black text-white"
-                    : "bg-gray-100 text-gray-900"
+                className={`flex ${
+                  m.role === "user" ? "justify-end" : "justify-start"
                 }`}
               >
-                {m.content}
+                <div
+                  className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2 text-sm leading-relaxed ${
+                    m.role === "user"
+                      ? "bg-black text-white"
+                      : "bg-gray-100 text-gray-900"
+                  }`}
+                >
+                  {m.content}
+                </div>
               </div>
+
+              {m.role === "assistant" && m.context?.length ? (
+                <div className="mt-2 flex justify-start">
+                  <div className="max-w-[85%] rounded-xl border bg-white px-4 py-3 text-sm shadow-sm">
+                    <div className="mb-2 font-semibold text-gray-800">
+                      From your documents
+                    </div>
+                    <ul className="list-disc space-y-1 pl-5 text-gray-700">
+                      {m.context.map((c, i) => (
+                        <li key={i}>{c}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>

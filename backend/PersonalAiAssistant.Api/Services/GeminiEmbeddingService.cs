@@ -18,20 +18,38 @@ public sealed class GeminiEmbeddingService
     }
 
     public async Task<float[]> EmbedAsync(string text, CancellationToken ct = default)
-{
-    if (string.IsNullOrWhiteSpace(text))
-        return [];
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return [];
 
-    var response = await _client.Models.EmbedContentAsync(
-        model: "gemini-embedding-001",
-        contents: text
-    );
+        var response = await _client.Models.EmbedContentAsync(
+            model: "gemini-embedding-001",
+            contents: text
+        );
 
-    var values = response?.Embeddings?.FirstOrDefault()?.Values;
-    if (values == null || values.Count == 0)
-        return [];
+        var values = response?.Embeddings?.FirstOrDefault()?.Values;
+        if (values == null || values.Count == 0)
+            return [];
 
-    return values.Select(v => (float)v).ToArray();
-}
+        return values.Select(v => (float)v).ToArray();
+    }
+    public async Task<string> ChatAsync(string prompt, CancellationToken ct = default)
+    {
+        var response = await _client.Models.GenerateContentAsync(
+            model: "gemini-2.0-flash",
+            contents: prompt
+        );
+
+        var part = response?
+            .Candidates?
+            .FirstOrDefault()?
+            .Content?
+            .Parts?
+            .FirstOrDefault();
+
+        return part?.ToString() ?? "";
+    }
+
+
 
 }

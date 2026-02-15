@@ -29,13 +29,68 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 
-app.MapPost("/api/chat", (ChatRequest request) =>
+app.MapPost("/api/chat", async (ChatRequest request, AppDbContext db, GeminiEmbeddingService emb) =>
 {
     if (string.IsNullOrWhiteSpace(request.Message))
         return Results.BadRequest("Message is required.");
 
-    return Results.Ok(new { reply = $"You said: {request.Message}" });
+    var qVec = await emb.EmbedAsync(request.Message);
+
+    var candidates = await db.Chunks
+        .Where(c => c.Embedding != null)
+        .OrderByDescending(c => c.CreatedAtUtc)
+        .Take(500)
+        .Select(c => new { c.Text, c.Embedding })
+        .ToListAsync();
+
+    static double Dot(float[] a, float[] b)
+    {
+        var n = Math.Min(a.Length, b.Length);
+        double sum = 0;
+        for (var i = 0; i < n; i++) sum += (double)a[i] * b[i];
+        return sum;
+    }
+
+    static double Norm(float[] a)
+    {
+        double sum = 0;
+        for (var i = 0; i < a.Length; i++) sum += (double)a[i] * a[i];
+        return Math.Sqrt(sum);
+    }
+
+    var qNorm = Norm(qVec);
+    var topContexts = candidates
+        .Select(c =>
+        {
+            var vec = c.Embedding!.ToArray();
+            var score = qNorm == 0 ? 0 : Dot(qVec, vec) / (qNorm * (Norm(vec) + 1e-12));
+            return new { c.Text, score };
+        })
+        .OrderByDescending(x => x.score)
+        .Take(5)
+        .Select(x => x.Text)
+        .ToList();
+
+    var prompt = BuildRagPrompt(request.Message, topContexts);
+
+    try
+    {
+        var res = await emb.ChatAsync(prompt);
+        return Results.Ok(new { reply = res, used = "gemini" });
+    }
+    catch (Exception)
+    {
+        // Fallback: return the retrieved context so the UI still works for free.
+        return Results.Ok(new
+        {
+            reply = "Gemini generation is unavailable (quota/billing). Here are the most relevant notes from your documents:",
+            used = "fallback",
+            context = topContexts
+        });
+    }
+
 });
+
 
 app.MapPost("/api/documents", async (IFormFile file, AppDbContext db, IWebHostEnvironment env) =>
 {
@@ -322,6 +377,61 @@ app.MapGet("/api/embeddings/test", async (GeminiEmbeddingService emb) =>
     return Results.Ok(new { dims = v.Length, first = v.Take(5).ToArray() });
 });
 
+app.MapGet("/api/search", async (string q, int? k, AppDbContext db, GeminiEmbeddingService emb) =>
+{
+    if (string.IsNullOrWhiteSpace(q))
+        return Results.BadRequest("Query parameter 'q' is required.");
+
+    var topK = Math.Clamp(k ?? 5, 1, 20);
+
+    var qVec = await emb.EmbedAsync(q);
+
+    var candidates = await db.Chunks
+        .Where(c => c.Embedding != null)
+        .OrderByDescending(c => c.CreatedAtUtc)
+        .Take(500)
+        .Select(c => new { c.DocumentId, c.Index, c.Text, c.Embedding })
+        .ToListAsync();
+
+    static double Dot(float[] a, float[] b)
+    {
+        var n = Math.Min(a.Length, b.Length);
+        double sum = 0;
+        for (var i = 0; i < n; i++) sum += (double)a[i] * b[i];
+        return sum;
+    }
+
+    static double Norm(float[] a)
+    {
+        double sum = 0;
+        for (var i = 0; i < a.Length; i++) sum += (double)a[i] * a[i];
+        return Math.Sqrt(sum);
+    }
+
+    var qNorm = Norm(qVec);
+    if (qNorm == 0) return Results.Ok(Array.Empty<object>());
+
+    var scored = candidates
+        .Select(c =>
+        {
+            var vec = c.Embedding!.ToArray();  
+            var score = Dot(qVec, vec) / (qNorm * (Norm(vec) + 1e-12));  
+            return new { c.DocumentId, c.Index, c.Text, score };
+        })
+        .OrderByDescending(x => x.score)
+        .Take(topK)
+        .Select(x => new
+        {
+            x.DocumentId,
+            x.Index,
+            score = Math.Round(x.score, 4),
+            preview = x.Text.Length > 240 ? x.Text.Substring(0, 240) + "…" : x.Text
+        })
+        .ToList();
+
+    return Results.Ok(scored);
+});
+
 app.Run();
 
 static string NormalizeText(string input)
@@ -435,6 +545,22 @@ static IEnumerable<string> ChunkText(string text, int maxChars, int overlap)
     foreach (var c in result)
         yield return c;
 }
+
+static string BuildRagPrompt(string userMessage, IEnumerable<string> contexts)
+{
+    var ctx = string.Join("\n\n---\n\n", contexts);
+
+    return
+$@"You are a helpful assistant. Use the CONTEXT to answer the USER QUESTION.
+If the answer is not in the context, say you don't know.
+
+CONTEXT:
+{ctx}
+
+USER QUESTION:
+{userMessage}";
+}
+
 
 public sealed record ChatRequest(string Message);
 public sealed record ChunkDto(int Index, string Text);
