@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 
-type DocumentMeta = {
+type Doc = {
   id: string;
   originalFileName: string;
   storedFileName: string;
@@ -10,30 +10,26 @@ type DocumentMeta = {
   uploadedAtUtc: string;
 };
 
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  const gb = mb / 1024;
-  return `${gb.toFixed(1)} GB`;
-}
+type IngestState = "idle" | "ingesting" | "done" | "error";
 
 export default function DocumentsPage() {
-  const [docs, setDocs] = useState<DocumentMeta[]>([]);
+  const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  const [ingestById, setIngestById] = useState<Record<string, IngestState>>({});
+
+  async function loadDocs() {
     setLoading(true);
     setError(null);
+
     try {
       const res = await fetch("/api/documents");
-      if (!res.ok) throw new Error();
-      const data = (await res.json()) as DocumentMeta[];
+      if (!res.ok) throw new Error(`Failed to load: ${res.status}`);
+
+      const data = (await res.json()) as Doc[];
       setDocs(data);
-    } catch {
+    } catch (e) {
       setError("Could not load documents.");
     } finally {
       setLoading(false);
@@ -41,79 +37,115 @@ export default function DocumentsPage() {
   }
 
   useEffect(() => {
-    void load();
+    void loadDocs();
   }, []);
+
+  async function ingestDoc(id: string) {
+    setIngestById((prev) => ({ ...prev, [id]: "ingesting" }));
+
+    try {
+      const res = await fetch(`/api/documents/${id}/ingest`, {
+        method: "POST",
+      });
+
+      if (!res.ok) throw new Error(`Ingest failed: ${res.status}`);
+
+      setIngestById((prev) => ({ ...prev, [id]: "done" }));
+    } catch {
+      setIngestById((prev) => ({ ...prev, [id]: "error" }));
+    }
+  }
 
   return (
     <main className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-4xl px-4 py-6">
-        <header className="mb-4 flex items-center justify-between gap-3">
+      <div className="mx-auto max-w-3xl px-4 py-6">
+        <header className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">Documents</h1>
-            <p className="text-sm text-gray-600">Uploaded files</p>
+            <p className="text-sm text-gray-600">
+              Upload, download, and ingest documents
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <a
-              href="/"
-              className="rounded-lg border bg-white px-3 py-2 text-sm shadow-sm"
-            >
-              Back to chat
-            </a>
+
+          <a href="/" className="text-sm underline text-gray-700">
+            Back to chat
+          </a>
+        </header>
+
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-sm font-medium text-gray-800">
+              Your documents
+            </div>
             <button
-              className="rounded-lg bg-black px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
-              onClick={() => void load()}
+              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+              onClick={() => void loadDocs()}
               disabled={loading}
             >
               Refresh
             </button>
           </div>
-        </header>
 
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
           {loading ? (
-            <p className="text-sm text-gray-600">Loading…</p>
+            <div className="text-sm text-gray-600">Loading…</div>
           ) : error ? (
-            <p className="text-sm text-red-600">{error}</p>
+            <div className="text-sm text-red-600">{error}</div>
           ) : docs.length === 0 ? (
-            <p className="text-sm text-gray-600">
-              No documents yet. Upload one from the chat page.
-            </p>
+            <div className="text-sm text-gray-600">No documents yet.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b text-gray-600">
-                  <tr>
-                    <th className="py-2 pr-3">File</th>
-                    <th className="py-2 pr-3">Size</th>
-                    <th className="py-2 pr-3">Uploaded (UTC)</th>
-                    <th className="py-2 pr-3">Id</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {docs.map((d) => (
-                    <tr key={d.id} className="border-b last:border-b-0">
-                      <td className="py-2 pr-3">
+            <div className="space-y-3">
+              {docs.map((d) => {
+                const state = ingestById[d.id] ?? "idle";
+
+                return (
+                  <div
+                    key={d.id}
+                    className="flex flex-col gap-2 rounded-xl border p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-gray-900">
+                          {d.originalFileName}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          id: {d.id}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
                         <a
-                        href={`/api/documents/${d.id}/download`}
-                        className="underline text-blue-600"
+                          className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+                          href={`/api/documents/${d.id}/download`}
                         >
-                            {d.originalFileName}
+                          Download
                         </a>
-                        </td>
-                      <td className="py-2 pr-3">{formatBytes(d.sizeBytes)}</td>
-                      <td className="py-2 pr-3">
-                        {new Date(d.uploadedAtUtc)
-                          .toISOString()
-                          .replace("T", " ")
-                          .slice(0, 19)}
-                      </td>
-                      <td className="py-2 pr-3 font-mono text-xs text-gray-600">
-                        {d.id}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+                        <button
+                          className="rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                          onClick={() => void ingestDoc(d.id)}
+                          disabled={state === "ingesting"}
+                        >
+                          {state === "ingesting" ? "Ingesting…" : "Ingest"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {state === "done" ? (
+                      <div className="text-sm text-green-700">
+                        Ingest complete ✅
+                      </div>
+                    ) : state === "error" ? (
+                      <div className="text-sm text-red-600">
+                        Ingest failed ❌ (check backend logs)
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-500">
+                        Ingest creates chunks + embeddings for search/chat.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
