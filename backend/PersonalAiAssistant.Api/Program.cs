@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
@@ -13,7 +15,6 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// ---- Chat ----
 app.MapPost("/api/chat", (ChatRequest request) =>
 {
     if (string.IsNullOrWhiteSpace(request.Message))
@@ -22,7 +23,6 @@ app.MapPost("/api/chat", (ChatRequest request) =>
     return Results.Ok(new { reply = $"You said: {request.Message}" });
 });
 
-// ---- Documents: Upload ----
 app.MapPost("/api/documents", async (IFormFile file) =>
 {
     if (file == null || file.Length == 0)
@@ -37,44 +37,64 @@ app.MapPost("/api/documents", async (IFormFile file) =>
     var storedName = $"{docId}{ext}";
     var storedPath = Path.Combine(uploadsDir, storedName);
 
-    await using var stream = File.Create(storedPath);
-    await file.CopyToAsync(stream);
-
-    return Results.Ok(new
+    await using (var stream = File.Create(storedPath))
     {
-        id = docId,
-        originalFileName,
-        storedFileName = storedName,
-        sizeBytes = file.Length
-    });
+        await file.CopyToAsync(stream);
+    }
+
+    var meta = new DocumentMeta(
+        Id: docId,
+        OriginalFileName: originalFileName,
+        StoredFileName: storedName,
+        SizeBytes: file.Length,
+        UploadedAtUtc: DateTime.UtcNow
+    );
+
+    var metaPath = Path.Combine(uploadsDir, $"{docId}.json");
+    await File.WriteAllTextAsync(metaPath, JsonSerializer.Serialize(meta));
+
+    return Results.Ok(meta);
 })
 .Accepts<IFormFile>("multipart/form-data")
 .DisableAntiforgery();
 
-app.MapGet("/api/documents", () =>
+app.MapGet("/api/documents", async () =>
 {
     var uploadsDir = Path.Combine(app.Environment.ContentRootPath, "Uploads");
 
     if (!Directory.Exists(uploadsDir))
-        return Results.Ok(Array.Empty<object>());
+        return Results.Ok(Array.Empty<DocumentMeta>());
 
-    var files = Directory.GetFiles(uploadsDir);
+    var metaFiles = Directory.GetFiles(uploadsDir, "*.json");
 
-    var result = files.Select(path =>
+    var docs = new List<DocumentMeta>();
+
+    foreach (var path in metaFiles)
     {
-        var fileInfo = new FileInfo(path);
-
-        return new
+        try
         {
-            storedFileName = fileInfo.Name,
-            sizeBytes = fileInfo.Length
-        };
-    });
+            var json = await File.ReadAllTextAsync(path);
+            var meta = JsonSerializer.Deserialize<DocumentMeta>(json);
+            if (meta != null) docs.Add(meta);
+        }
+        catch
+        {
+        }
+    }
 
-    return Results.Ok(result);
+    docs.Sort((a, b) => b.UploadedAtUtc.CompareTo(a.UploadedAtUtc));
+
+    return Results.Ok(docs);
 });
-
 
 app.Run();
 
 public sealed record ChatRequest(string Message);
+
+public sealed record DocumentMeta(
+    string Id,
+    string OriginalFileName,
+    string StoredFileName,
+    long SizeBytes,
+    DateTime UploadedAtUtc
+);
