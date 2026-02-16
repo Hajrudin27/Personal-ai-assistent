@@ -4,12 +4,19 @@ import React, { useEffect, useRef, useState } from "react";
 
 type Role = "user" | "assistant";
 
+type Source = {
+  documentId: string;
+  originalFileName: string;
+  index: number;
+  snippet: string;
+};
+
 type ChatMessage = {
   id: string;
   role: Role;
   content: string;
   createdAt: number;
-  context?: string[];
+  sources?: Source[];
 };
 
 function uid() {
@@ -123,13 +130,13 @@ export default function HomePage() {
       const data = (await res.json()) as {
         reply: string;
         used?: string;
-        context?: string[];
+        sources?: Source[];
       };
 
       setMessages((prev) =>
         prev.map((m) =>
           m.id === thinkingId
-            ? { ...m, content: data.reply, context: data.context }
+            ? { ...m, content: data.reply, sources: data.sources }
             : m
         )
       );
@@ -208,15 +215,29 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {m.role === "assistant" && m.context?.length ? (
+              {m.role === "assistant" && m.sources?.length ? (
                 <div className="mt-2 flex justify-start">
                   <div className="max-w-[85%] rounded-xl border bg-white px-4 py-3 text-sm shadow-sm">
                     <div className="mb-2 font-semibold text-gray-800">
-                      From your documents
+                      Sources
                     </div>
-                    <ul className="list-disc space-y-1 pl-5 text-gray-700">
-                      {m.context.map((c, i) => (
-                        <li key={i}>{c}</li>
+
+                    <ul className="space-y-2">
+                      {m.sources.map((s, i) => (
+                        <li
+                          key={`${s.documentId}-${s.index}-${i}`}
+                          className="rounded-lg border bg-gray-50 p-3"
+                        >
+                          <div className="text-sm font-medium text-gray-900">
+                            {s.originalFileName}{" "}
+                            <span className="text-gray-500">
+                              (chunk {s.index})
+                            </span>
+                          </div>
+                          <div className="mt-1 whitespace-pre-wrap text-sm text-gray-700">
+                            {s.snippet}
+                          </div>
+                        </li>
                       ))}
                     </ul>
                   </div>
