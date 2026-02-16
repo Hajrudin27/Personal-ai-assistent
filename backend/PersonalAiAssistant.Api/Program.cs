@@ -11,7 +11,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddSingleton<GeminiEmbeddingService>();
+builder.Services.AddHttpClient<OllamaEmbeddingService>(c =>
+{
+    c.BaseAddress = new Uri("http://localhost:11434");
+});
+
 builder.Services.AddHttpClient<OllamaChatService>(c =>
 {
     c.BaseAddress = new Uri("http://localhost:11434");
@@ -33,18 +37,44 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 
-app.MapPost("/api/chat", async (ChatRequest request, AppDbContext db, GeminiEmbeddingService emb, OllamaChatService ollama) =>
+app.MapPost("/api/chat", async (ChatRequest request, AppDbContext db, OllamaEmbeddingService emb, OllamaChatService ollama) =>
 {
     if (string.IsNullOrWhiteSpace(request.Message))
         return Results.BadRequest("Message is required.");
 
     var qVec = await emb.EmbedAsync(request.Message);
 
-    var candidates = await db.Chunks
-        .Where(c => c.Embedding != null)
+    var isGenericDocQuestion =
+        request.Message.Trim().Length <= 60 &&
+        Regex.IsMatch(request.Message, @"\b(document|doc|file)\b", RegexOptions.IgnoreCase);
+
+    string? latestDocId = null;
+    if (isGenericDocQuestion)
+    {
+        latestDocId = await db.Documents
+            .OrderByDescending(d => d.UploadedAtUtc)
+            .Select(d => d.Id)
+            .FirstOrDefaultAsync();
+    }
+
+    var candidatesQuery = db.Chunks.Where(c => c.Embedding != null);
+
+    if (!string.IsNullOrWhiteSpace(latestDocId))
+    {
+        candidatesQuery = candidatesQuery.Where(c => c.DocumentId == latestDocId);
+    }
+
+    var candidates = await candidatesQuery
         .OrderByDescending(c => c.CreatedAtUtc)
         .Take(500)
-        .Select(c => new { c.Text, c.Embedding })
+        .Select(c => new
+        {
+            c.DocumentId,
+            c.Index,
+            c.Text,
+            c.Embedding,
+            OriginalFileName = c.Document.OriginalFileName
+        })
         .ToListAsync();
 
     static double Dot(float[] a, float[] b)
@@ -64,23 +94,36 @@ app.MapPost("/api/chat", async (ChatRequest request, AppDbContext db, GeminiEmbe
 
     var qNorm = Norm(qVec);
 
-    var topContexts = candidates
+    var topSources = candidates
         .Select(c =>
         {
             var vec = c.Embedding!.ToArray();
             var score = qNorm == 0 ? 0 : Dot(qVec, vec) / (qNorm * (Norm(vec) + 1e-12));
-            return new { c.Text, score };
+            return new { c.DocumentId, c.OriginalFileName, c.Index, c.Text, score };
         })
         .OrderByDescending(x => x.score)
+        .GroupBy(x => new { x.DocumentId, x.Index })
+        .Select(g => g.First())
         .Take(5)
-        .Select(x => x.Text)
         .ToList();
 
-    var system = BuildSystemPrompt(topContexts);
+    var system = BuildSystemPrompt(topSources.Select(s => (s.OriginalFileName, s.Index, s.Text)));
     var user = BuildUserPrompt(request.Message);
 
     var answer = await ollama.ChatAsync(system, user);
-    return Results.Ok(new { reply = answer, used = "ollama", context = topContexts });
+
+    return Results.Ok(new
+    {
+        reply = answer,
+        used = "ollama",
+        sources = topSources.Select(s => new
+        {
+            s.DocumentId,
+            s.OriginalFileName,
+            s.Index,
+            snippet = s.Text.Length > 240 ? s.Text.Substring(0, 240) + "…" : s.Text
+        })
+    });
 });
 
 app.MapPost("/api/documents", async (IFormFile file, AppDbContext db, IWebHostEnvironment env) =>
@@ -256,7 +299,7 @@ app.MapGet("/api/documents/{id}/chunks", async (string id, int? maxChars, int? o
     return Results.Ok(new { id = doc.Id, chunks });
 });
 
-app.MapPost("/api/documents/{id}/ingest", async (string id, int? maxChars, int? overlap, AppDbContext db, IWebHostEnvironment env, GeminiEmbeddingService emb) =>
+app.MapPost("/api/documents/{id}/ingest", async (string id, int? maxChars, int? overlap, AppDbContext db, IWebHostEnvironment env, OllamaEmbeddingService emb) =>
 {
     var doc = await db.Documents.FirstOrDefaultAsync(d => d.Id == id);
     if (doc == null)
@@ -362,13 +405,13 @@ app.MapGet("/api/documents/{id}/chunks/db", async (string id, AppDbContext db) =
     return Results.Ok(rows);
 });
 
-app.MapGet("/api/embeddings/test", async (GeminiEmbeddingService emb) =>
+app.MapGet("/api/embeddings/test", async (OllamaEmbeddingService emb) =>
 {
     var v = await emb.EmbedAsync("hello from embeddings test");
     return Results.Ok(new { dims = v.Length, first = v.Take(5).ToArray() });
 });
 
-app.MapGet("/api/search", async (string q, int? k, AppDbContext db, GeminiEmbeddingService emb) =>
+app.MapGet("/api/search", async (string q, int? k, AppDbContext db, OllamaEmbeddingService emb) =>
 {
     if (string.IsNullOrWhiteSpace(q))
         return Results.BadRequest("Query parameter 'q' is required.");
@@ -537,36 +580,28 @@ static IEnumerable<string> ChunkText(string text, int maxChars, int overlap)
         yield return c;
 }
 
-static string BuildSystemPrompt(IEnumerable<string> contexts)
+static string BuildSystemPrompt(IEnumerable<(string fileName, int chunkIndex, string text)> sources)
 {
-    var ctxList = contexts
-        .Where(s => !string.IsNullOrWhiteSpace(s))
-        .Select((s, i) => $"SOURCE {i + 1}:\n{s.Trim()}")
+    var srcList = sources
+        .Where(s => !string.IsNullOrWhiteSpace(s.text))
+        .Select((s, i) =>
+            $"SOURCE {i + 1}: {s.fileName} (chunk {s.chunkIndex})\n{s.text.Trim()}")
         .ToArray();
 
-    var ctx = ctxList.Length == 0 ? "(no sources)" : string.Join("\n\n", ctxList);
+    var srcBlock = srcList.Length == 0 ? "(no sources)" : string.Join("\n\n", srcList);
 
     return
 $@"You are a helpful assistant.
-You must answer using ONLY the SOURCES below.
-If the user asks what the document says, you should repeat/quote the most relevant source.
-If the answer is not present, reply exactly: I don't know.
+Answer using ONLY the SOURCES below.
+If the answer is in the sources, quote the exact relevant text.
+If it is not present, reply exactly: I don't know.
 
-Example:
-SOURCES:
-SOURCE 1:
-This is a test.
-
-User: What does the document say?
-Assistant: The document says: ""This is a test."" 
-Sources used: SOURCE 1
-
-Now follow the same pattern.
+When you cite, you MUST cite by the SOURCE number exactly like this:
+Sources used: SOURCE 1, SOURCE 2
 
 SOURCES:
-{ctx}";
+{srcBlock}";
 }
-
 
 static string BuildUserPrompt(string userMessage)
 {
