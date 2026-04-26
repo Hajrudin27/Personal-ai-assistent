@@ -90,8 +90,8 @@ User asks a question
 Most relevant chunks are retrieved
 AI responds with context from your data
 
-🎓 Academic Context
-This project was developed as part of a Software Technology Engineering semester project to explore:
+🎓 Context
+This project was developed as part of a self learning project. 
 Local AI systems
 Vector databases
 Retrieval-Augmented Generation
