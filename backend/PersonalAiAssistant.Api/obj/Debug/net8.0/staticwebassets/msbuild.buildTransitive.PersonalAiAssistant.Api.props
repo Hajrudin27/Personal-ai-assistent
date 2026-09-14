@@ -1,3 +1,0 @@
-﻿<Project>
-  <Import Project="../buildMultiTargeting/PersonalAiAssistant.Api.props" />
-</Project>
