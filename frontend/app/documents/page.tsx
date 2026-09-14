@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import Link from "next/link";
 
 type Doc = {
   id: string;
@@ -29,7 +30,7 @@ export default function DocumentsPage() {
 
       const data = (await res.json()) as Doc[];
       setDocs(data);
-    } catch (e) {
+    } catch {
       setError("Could not load documents.");
     } finally {
       setLoading(false);
@@ -67,9 +68,9 @@ export default function DocumentsPage() {
             </p>
           </div>
 
-          <a href="/" className="text-sm underline text-gray-700">
+          <Link href="/" className="text-sm underline text-gray-700">
             Back to chat
-          </a>
+          </Link>
         </header>
 
         <div className="rounded-xl border bg-white p-4 shadow-sm">
