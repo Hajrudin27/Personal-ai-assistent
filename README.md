@@ -1,6 +1,12 @@
 # Personal AI Assistant (Local RAG)
 
-Upload your own documents and ask questions about them, with everything running on your own machine. Next.js frontend, ASP.NET Core backend, Ollama for the models, PostgreSQL with pgvector for the search.
+A local document-question-answering prototype with an ingestion and retrieval pipeline written in **C# / ASP.NET Core (.NET 8)**.
+
+**Next.js · Ollama · PostgreSQL / pgvector · Entity Framework Core**
+
+The code exposes the mechanics: text extraction, overlapping chunks, embeddings, cosine ranking and context assembly. PostgreSQL stores the vectors; the current similarity calculation runs in C#.
+
+[Run locally](#running-it) · [Pipeline](#how-it-works) · [Trade-offs](#whats-still-rough)
 
 ## Why I built it
 
@@ -10,15 +16,15 @@ I also wanted it to run locally rather than against OpenAI's API, for two reason
 
 ## What it does
 
-Upload a PDF or text file, hit ingest, and the document gets split up, embedded and stored. After that the chat answers using what's in your documents rather than whatever the model happened to memorise during training.
+Upload a PDF, `.txt` or `.md` file, hit ingest, and the document gets split up, embedded and stored. Questions retrieve context from those documents and the prompt asks the model to answer from it. That instruction does not guarantee factual answers.
 
-It's all on your own machine. Nothing leaves it, and it works with the wifi off.
+The document and model request path uses local services: the Next.js proxy forwards to the API on port 5146, and the API calls Ollama on port 11434. Dependencies, Docker images and models need downloading first; the frontend also uses build-time Google Fonts. Local inference is possible after that setup, but this repository does not provide a verified fully offline installation or network-isolation guarantee.
 
 ## Why I wrote the pipeline myself
 
-Most RAG projects are Python with LangChain, where the whole thing is about twenty lines because the library does the work. I wrote the ingestion and retrieval in C# instead, without a framework.
+I wrote the ingestion and retrieval in C# without a RAG orchestration framework, using PdfPig for PDF extraction, EF Core for persistence and HTTP clients for Ollama.
 
-That was slower and the code is less impressive to look at. But it meant I had to make each decision myself rather than accept a default: how to split the text, how many chunks to retrieve, what to do when nothing matched well. Those decisions are the actual substance of RAG, and using a library would have hidden every one of them from me.
+That meant I had to make each decision myself rather than accept a default: how to split the text, how many chunks to retrieve, what to do when nothing matched well. Those decisions are the actual substance of RAG, and using a library would have hidden every one of them from me.
 
 ## How it works
 
@@ -28,60 +34,77 @@ document  ->  split into chunks
           ->  vectors stored in PostgreSQL with pgvector
 
 question  ->  embedded with the same model
-          ->  nearest chunks found by vector similarity
-          ->  those chunks passed to the chat model (llama3) as context
+          ->  latest 500 candidates ranked by cosine similarity in C#
+          ->  those chunks passed to the chat model (llama3.1:8b) as context
           ->  answer
 ```
 
 The part that surprised me is how much the answer quality depends on the retrieval step rather than on the model. A good model given the wrong three paragraphs will confidently answer the wrong question. Most of the time I spent tuning this went into retrieval, not into prompting.
 
-One thing worth knowing if you build something similar: the embedding model and the stored vectors are tied together. `nomic-embed-text` produces vectors of a fixed size, and the pgvector column is declared with that size. Swap the embedding model and every vector already in the database is meaningless, because the new model puts things in a different space entirely. There's no error, just quietly worse results. Changing the model means re-ingesting everything.
+The embedding model and stored vectors are tied together. The database column is currently an unconstrained `vector`, so it does not enforce a fixed dimension. The C# dot product uses the shorter of two vector lengths rather than rejecting a mismatch. Changing the embedding model therefore requires re-ingesting the corpus; model identity and dimension validation are still missing.
+
+The chat path uses the top five chunks and returns document IDs, original filenames, chunk indices and snippets. A short question containing “document”, “doc” or “file” narrows retrieval to the latest document. This heuristic makes a quick demo convenient, but can choose the wrong document for a real question.
 
 ## What's still rough
 
 Being honest about where it is:
 
-- **Chunking is naive.** It splits on length rather than on meaning, so a chunk can end mid-sentence or split a table down the middle. Chunking on paragraph or heading boundaries would help a lot, and it's the first thing I'd fix.
-- **No metadata on chunks.** I store the text and the vector, but not which page or section it came from, so the assistant can't tell you where an answer came from. For anything you'd actually rely on, that citation matters more than the answer.
+- **Chunking is heuristic.** It packs paragraphs where possible, then splits oversized text by character count with overlap (defaults: 1,200 characters and 150 overlap). It can still split sentences or tables, and PDFs need a text layer; there is no OCR.
+- **Limited provenance.** Filename and chunk metadata are returned, but page/section positions and verified answer-to-source citations are not. A model-generated citation is not proof of support.
+- **Bounded retrieval.** Only the latest 500 candidate chunks are considered, with no pgvector distance query or vector index. Older relevant chunks may be missed. There is no minimum relevance threshold or measured retrieval-quality benchmark.
 - **Responses aren't streamed.** You wait for the whole answer, which on a local model is long enough to feel broken.
-- **Single user.** No accounts, no separation between one person's documents and another's.
+- **Single user.** There is no authentication or per-user document separation. Uploads and extracted text are stored locally without application-level encryption. Use synthetic documents for demos; this is not a hardened service for confidential material.
 
 ## Running it
 
-You'll need Node.js, the .NET 8 SDK, PostgreSQL and [Ollama](https://ollama.com).
+Prerequisites: .NET 8 SDK, Node.js 20.9+ and npm, Docker with Compose, and [Ollama](https://ollama.com). Run these from the repository root.
 
-**Models:**
+Start Ollama (its desktop app or `ollama serve`), then fetch the exact models used by the services:
 
 ```bash
-ollama pull llama3
+ollama pull llama3.1:8b
 ollama pull nomic-embed-text
+docker compose up -d
+docker compose exec db pg_isready -U app -d personal_ai
 ```
 
-**Database:**
+Compose starts PostgreSQL 16 with pgvector on **localhost:55432**, database `personal_ai`. The matching demo connection string is in `appsettings.Development.json` under **`ConnectionStrings:Db`**, not in `appsettings.json`. Keep custom credentials out of tracked files; .NET also accepts `ConnectionStrings__Db` as an environment variable.
 
-```sql
-CREATE DATABASE personal_ai;
-CREATE EXTENSION vector;
-```
-
-Then point the connection string at it in `backend/PersonalAiAssistant.Api/appsettings.json`.
-
-**Backend** (starts on `http://localhost:5146`):
+Create the schema using the existing EF migration (which also enables the vector extension):
 
 ```bash
-cd backend/PersonalAiAssistant.Api
-dotnet run
+dotnet tool install --global dotnet-ef --version 9.0.1
+# If already installed, check `dotnet ef --version` and use a 9.x tool.
+ASPNETCORE_ENVIRONMENT=Development dotnet ef database update \
+  --project backend/PersonalAiAssistant.Api
+
+dotnet run --project backend/PersonalAiAssistant.Api --launch-profile http
 ```
 
-**Frontend** (starts on `http://localhost:3000`):
+The API runs on [localhost:5146](http://localhost:5146/swagger). The .NET target is 8; the checked-in EF Core packages are 9.0.1. Startup does not automatically apply migrations.
+
+In a second terminal, from the repository root:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Open the Documents page, upload a file, click Ingest, then go and ask it something.
+Open [localhost:3000](http://localhost:3000), upload a synthetic document on the Documents page, click **Ingest**, then ask a question. Requests under `/api` are proxied to port 5146 by `frontend/next.config.ts`.
+
+### Checks
+
+```bash
+dotnet build Personal-ai-assistent.sln
+cd frontend
+npm run lint
+npm run build
+```
+
+There is no automated backend test project or RAG evaluation suite yet. Compilation does not verify answer quality or a full upload → ingest → retrieval flow.
+
+Uploads and generated `bin/` / `obj/` output are excluded from version control. The API creates `Uploads/` when needed; no bundled personal documents are required.
 
 ## Project structure
 
@@ -97,9 +120,9 @@ backend/PersonalAiAssistant.Api/
 
 - Chunk on structure instead of length, and keep page or section metadata so answers can cite their source
 - Stream responses so it doesn't look frozen
-- More file formats than PDF and plain text
+- More file formats beyond PDF, plain text and Markdown
 - Some way to see how confident a retrieval was, so the assistant can say "I don't think this is in your documents" instead of guessing
 
 ## Built with
 
-Next.js, ASP.NET Core, Ollama (llama3, nomic-embed-text), PostgreSQL, pgvector
+Next.js, ASP.NET Core, Ollama (llama3.1:8b, nomic-embed-text), PostgreSQL, pgvector
