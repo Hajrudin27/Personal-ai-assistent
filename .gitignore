@@ -1,0 +1,26 @@
+# .NET build output
+**/bin/
+**/obj/
+
+# Local documents and ingestion metadata
+**/Uploads/
+
+# Frontend output and dependencies
+**/node_modules/
+**/.next/
+**/out/
+*.tsbuildinfo
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+**/secrets.json
+
+# Local editor and OS state
+.vs/
+.idea/
+.vscode/
+.DS_Store
+*.user
+*.suo
